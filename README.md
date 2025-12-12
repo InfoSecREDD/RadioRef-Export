@@ -269,5 +269,5 @@ Use responsibly and in compliance with Radio Reference's Terms of Service.
 
 ---
 
-**Radio Frequency Harvester v1.0**  
+**Radio Frequency Harvester v1.1**  
 *Scraping Radio Reference → CHIRP CSV*
