@@ -21,7 +21,8 @@ A powerful Python script that pulls frequency data from Radio Reference via web 
 - **Create Backup**: Standalone backup creation from CSV files
 - **Restore from Backup**: Restore radio configurations from backup files
 - **View Backup Files**: Browse and manage all backup files
-- **Select Radio Model**: Choose from CHIRP-compatible radio models with proper settings
+- **Select Radio Model**: Choose from **all 523 CHIRP-compatible radio models** with proper settings
+- **Comprehensive Device Support**: Complete coverage of all radios supported by CHIRP
 - **Serial Port Detection**: Automatic USB serial port detection (filters out Bluetooth/debug ports)
 - **Connection Status**: Real-time display of radio connection status
 
@@ -184,11 +185,20 @@ Cache files are stored in `countyID.db` and organized by state for efficient loo
 
 ## Radio Model Support
 
-The script supports a wide range of CHIRP-compatible radio models with proper settings:
-- Automatic detection of baudrate, max channels, and CHIRP ID
+The script includes comprehensive support for **all 523 CHIRP-compatible radio models** with proper settings:
+- **Complete CHIRP Coverage**: All radios supported by CHIRP are included in the device list
+- Automatic detection of baudrate, max channels, and CHIRP ID for each model
 - Radio model selection persists across sessions
-- Custom radio models can be entered manually
+- Custom radio models can be entered manually if needed
 - Connection status displayed in main menu
+
+Supported manufacturers include:
+- **Major Brands**: Yaesu, Kenwood, Icom, Alinco
+- **Popular Models**: Baofeng, BTECH, Wouxun, Anytone, TYT, Radioddity
+- **Specialized**: Quansheng, Retevis, TIDRADIO, and many more
+- **Complete List**: All 523 radios from the official CHIRP supported devices list
+
+Radio settings (baudrate, max channels, memory format) are automatically configured based on CHIRP's official driver specifications.
 
 ## File Formats
 
@@ -269,5 +279,5 @@ Use responsibly and in compliance with Radio Reference's Terms of Service.
 
 ---
 
-**Radio Frequency Harvester v1.1**  
+**Radio Frequency Harvester v1.1.1**  
 *Scraping Radio Reference → CHIRP CSV*
