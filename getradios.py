@@ -387,7 +387,7 @@ def print_menu():
         print(f"{Colors.INFO}Selected Radio:{Colors.RESET} {Colors.SUCCESS}{selected_radio['name']}{Colors.RESET} ({selected_radio['manufacturer']})")
         print(f"{Colors.DIM}  Baudrate: {selected_radio['baudrate']} | Max Channels: {selected_radio['max_channels']} | CHIRP ID: {selected_radio['chirp_id']}{Colors.RESET}\n")
     else:
-        print(f"{Colors.WARNING}⚠  No radio model selected{Colors.RESET} {Colors.DIM}(Use option 7 to select){Colors.RESET}\n")
+        print(f"{Colors.WARNING}⚠  No radio model selected{Colors.RESET} {Colors.DIM}(Use option 9 to select){Colors.RESET}\n")
     
     is_connected, port, radio_name = get_connection_status()
     if is_connected and port:
