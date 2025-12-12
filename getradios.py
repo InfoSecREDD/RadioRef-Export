@@ -11,6 +11,7 @@ import csv
 import sys
 import os
 import subprocess
+import importlib
 import importlib.util
 
 REQUIRED_PACKAGES = {
@@ -24,12 +25,80 @@ REQUIRED_PACKAGES = {
     'playwright': 'playwright>=1.40.0'
 }
 
+CHIRP_CLI_PATH = None
+CHIRP_AVAILABLE = False
+CHIRP_INSTALL_ATTEMPTED = False
+CHIRP_VERIFIED = False
+
+
+def setup_venv():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_dir = os.path.join(script_dir, '.venv')
+    venv_python = os.path.join(venv_dir, 'bin', 'python3')
+    
+    if sys.platform == 'win32':
+        venv_python = os.path.join(venv_dir, 'Scripts', 'python.exe')
+    
+    current_venv = os.environ.get('VIRTUAL_ENV')
+    if current_venv:
+        current_venv = os.path.normpath(os.path.abspath(current_venv))
+        venv_dir_abs = os.path.normpath(os.path.abspath(venv_dir))
+        if current_venv == venv_dir_abs:
+            return
+    
+    if not os.path.exists(venv_dir):
+        print("Creating virtual environment...")
+        try:
+            subprocess.run(
+                [sys.executable, '-m', 'venv', venv_dir],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            print("✓ Virtual environment created successfully!")
+        except subprocess.CalledProcessError as e:
+            print(f"✗ Failed to create virtual environment: {e}")
+            print("Falling back to system Python (not recommended)")
+            return
+        except Exception as e:
+            print(f"✗ Error creating virtual environment: {e}")
+            print("Falling back to system Python (not recommended)")
+            return
+    
+    if not os.path.exists(venv_python):
+        print(f"✗ Virtual environment Python not found at {venv_python}")
+        print("Falling back to system Python (not recommended)")
+        return
+    
+    print("Activating virtual environment and restarting...")
+    try:
+        env = os.environ.copy()
+        env['VIRTUAL_ENV'] = venv_dir
+        os.execve(venv_python, [venv_python] + sys.argv, env)
+    except Exception as e:
+        print(f"✗ Failed to restart with venv Python: {e}")
+        print("Falling back to system Python (not recommended)")
+        return
+
+
+setup_venv()
+
 
 def get_pip_command():
-    """Detect the correct pip command to use"""
     pip_commands = [
         [sys.executable, '-m', 'pip'],
     ]
+    
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_dir = os.path.join(script_dir, '.venv')
+    
+    if sys.platform == 'win32':
+        venv_pip = os.path.join(venv_dir, 'Scripts', 'pip.exe')
+    else:
+        venv_pip = os.path.join(venv_dir, 'bin', 'pip3')
+    
+    if os.path.exists(venv_pip):
+        pip_commands.insert(0, [venv_pip])
     
     python_version = sys.version_info[0]
     if python_version == 3:
@@ -53,7 +122,6 @@ def get_pip_command():
 
 
 def check_and_install_dependencies():
-    """Check for required packages and install if missing"""
     missing_packages = []
     
     for package_name, package_spec in REQUIRED_PACKAGES.items():
@@ -81,12 +149,13 @@ def check_and_install_dependencies():
                     text=True
                 )
                 if result.returncode != 0:
-                    result = subprocess.run(
-                        pip_cmd + ['install', '--quiet', '--user', package],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True
-                    )
+                    if not os.environ.get('VIRTUAL_ENV'):
+                        result = subprocess.run(
+                            pip_cmd + ['install', '--quiet', '--user', package],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True
+                        )
                     if result.returncode != 0:
                         print(f"    Retrying with upgraded pip...")
                         subprocess.run(
@@ -128,6 +197,8 @@ import time
 import re
 from datetime import datetime
 import json
+import tempfile
+import shutil
 
 try:
     from colorama import init, Fore, Style, Back
@@ -144,7 +215,6 @@ except ImportError:
 
 
 class Colors:
-    """Color constants"""
     HEADER = Fore.CYAN + Style.BRIGHT
     SUCCESS = Fore.GREEN + Style.BRIGHT
     WARNING = Fore.YELLOW + Style.BRIGHT
@@ -156,7 +226,6 @@ class Colors:
 
 
 def print_banner():
-    """Print badass ASCII art banner"""
     COLOR_RADIO = Fore.RED + Style.BRIGHT
     COLOR_FREQ = Fore.YELLOW + Style.BRIGHT
     COLOR_HARV = Fore.GREEN + Style.BRIGHT
@@ -179,7 +248,7 @@ def print_banner():
 {COLOR_BOX}║{Colors.RESET}                                                           {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}    ════════════════════════════════════════════════════   {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}                                                           {COLOR_BOX}║{Colors.RESET}
-{COLOR_BOX}║{Colors.RESET}    {Colors.HEADER}  RADIO FREQUENCY HARVESTER v1.0{Colors.RESET}                       {COLOR_BOX}║{Colors.RESET}
+{COLOR_BOX}║{Colors.RESET}    {Colors.HEADER}  RADIO FREQUENCY HARVESTER v1.1{Colors.RESET}                       {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}    {Colors.WARNING}  Scraping Radio Reference → CHIRP CSV{Colors.RESET}                 {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}                                                           {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}    {Colors.DIM}              Created by InfoSecREDD{Colors.RESET}                   {COLOR_BOX}║{Colors.RESET}
@@ -191,23 +260,10 @@ def print_banner():
 
 
 def clear_screen():
-    """Clear the terminal screen"""
     os.system('cls' if os.name == 'nt' else 'clear')
 
 
 def check_radio_connection(port: Optional[str] = None) -> Tuple[bool, Optional[str]]:
-    """
-    Check if a radio is connected via USB serial port
-    
-    Only USB serial adapters/devices are considered valid radio connections.
-    Bluetooth, debug consoles, and other non-USB serial ports are excluded.
-    
-    Args:
-        port: Optional specific port to check. If None, checks all ports.
-        
-    Returns:
-        Tuple of (is_connected, port_name)
-    """
     try:
         import serial.tools.list_ports
         
@@ -238,7 +294,6 @@ def check_radio_connection(port: Optional[str] = None) -> Tuple[bool, Optional[s
         ]
         
         def is_usb_serial_port(port_info) -> bool:
-            """Check if a port is a USB serial adapter (valid for radio connection)"""
             device = port_info.device.lower()
             description = (port_info.description or "").lower()
             hwid = (port_info.hwid or "").lower()
@@ -257,7 +312,6 @@ def check_radio_connection(port: Optional[str] = None) -> Tuple[bool, Optional[s
             return False
         
         def is_system_port(port_info) -> bool:
-            """Check if a port is a system port (Bluetooth, debug, etc.) - NOT a radio"""
             device = port_info.device.lower()
             description = (port_info.description or "").lower()
             hwid = (port_info.hwid or "").lower()
@@ -300,12 +354,6 @@ def check_radio_connection(port: Optional[str] = None) -> Tuple[bool, Optional[s
 
 
 def get_connection_status() -> Tuple[bool, Optional[str], Optional[str]]:
-    """
-    Get connection status for selected radio
-    
-    Returns:
-        Tuple of (is_connected, port_name, radio_model)
-    """
     selected_radio = get_selected_radio_model()
     if not selected_radio:
         return False, None, None
@@ -330,7 +378,6 @@ def get_connection_status() -> Tuple[bool, Optional[str], Optional[str]]:
 
 
 def print_menu():
-    """Print the main menu with status information"""
     print(f"\n{Colors.HEADER}{'='*60}{Colors.RESET}")
     print(f"{Colors.HEADER}  MAIN MENU{Colors.RESET}")
     print(f"{Colors.HEADER}{'='*60}{Colors.RESET}\n")
@@ -365,7 +412,7 @@ def print_menu():
     print(f"{Colors.INFO}[9]{Colors.RESET} Select Radio Model {Colors.DIM}(or: models, radios, select){Colors.RESET}")
     print(f"{Colors.INFO}[10]{Colors.RESET} Filter Existing CSV {Colors.DIM}(or: filter){Colors.RESET}")
     print(f"{Colors.INFO}[11]{Colors.RESET} Convert CSV to TXT {Colors.DIM}(or: convert, csv2txt){Colors.RESET}")
-    print(f"{Colors.INFO}[12]{Colors.RESET} View Backup Files {Colors.DIM}(or: backups, backup){Colors.RESET}")
+    print(f"{Colors.INFO}[12]{Colors.RESET} View Backup Files {Colors.DIM}(or: backups, viewbackups){Colors.RESET}")
     print(f"{Colors.INFO}[13]{Colors.RESET} Build County Cache {Colors.DIM}(or: cache, buildcache){Colors.RESET}")
     print()
     print(f"{Colors.INFO}[0/Q]{Colors.RESET} Exit {Colors.DIM}(or: quit, exit){Colors.RESET}")
@@ -373,7 +420,6 @@ def print_menu():
 
 
 def get_user_input(prompt: str, color: str = Colors.INFO) -> str:
-    """Get user input with colored prompt"""
     try:
         return input(f"{color}{prompt}{Colors.RESET}").strip()
     except KeyboardInterrupt:
@@ -382,12 +428,6 @@ def get_user_input(prompt: str, color: str = Colors.INFO) -> str:
 
 
 def detect_serial_ports() -> List[Tuple[str, str]]:
-    """
-    Detect available USB serial ports (filters out Bluetooth, debug, and system ports)
-    
-    Returns:
-        List of tuples (port_name, description) for USB serial ports only
-    """
     try:
         import serial.tools.list_ports
         
@@ -418,7 +458,6 @@ def detect_serial_ports() -> List[Tuple[str, str]]:
         ]
         
         def is_usb_serial_port(port_info) -> bool:
-            """Check if a port is a USB serial adapter"""
             device = port_info.device.lower()
             description = (port_info.description or "").lower()
             hwid = (port_info.hwid or "").lower()
@@ -437,7 +476,6 @@ def detect_serial_ports() -> List[Tuple[str, str]]:
             return False
         
         def is_system_port(port_info) -> bool:
-            """Check if a port is a system port (Bluetooth, debug, etc.)"""
             device = port_info.device.lower()
             description = (port_info.description or "").lower()
             
@@ -476,15 +514,6 @@ def detect_serial_ports() -> List[Tuple[str, str]]:
 
 
 def validate_chirp_csv(csv_file: str) -> Tuple[bool, str, List[Dict]]:
-    """
-    Validate CHIRP CSV format and parse frequencies
-    
-    Args:
-        csv_file: Path to CSV file
-        
-    Returns:
-        Tuple of (is_valid, error_message, frequencies_list)
-    """
     if not os.path.exists(csv_file):
         return False, f"File not found: {csv_file}", []
     
@@ -742,6 +771,491 @@ def create_backup_file(radio_model: str, port: str, frequencies: List[Dict] = No
         return None
 
 
+def check_git_available() -> bool:
+    try:
+        result = subprocess.run(
+            ['git', '--version'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5
+        )
+        return result.returncode == 0
+    except:
+        return False
+
+
+def install_chirp() -> Tuple[bool, Optional[str]]:
+    """
+    Automatically install CHIRP by cloning the repository and installing dependencies
+    
+    Returns:
+        Tuple of (success, chirp_path)
+    """
+    print("[*] CHIRP not found. Installing CHIRP automatically...")
+    
+    if not check_git_available():
+        print("[!] Git is not available. Please install Git first:")
+        print("[*]   Windows: https://git-scm.com/download/win")
+        print("[*]   macOS: xcode-select --install")
+        print("[*]   Linux: sudo apt install git")
+        return False, None
+    
+    chirp_dir = os.path.join(os.path.dirname(__file__), 'chirp')
+    chirpc_path = os.path.join(chirp_dir, 'chirpc')
+    chirp_cli_path = os.path.join(chirp_dir, 'chirp', 'cli', 'main.py')
+    
+    if os.path.exists(chirpc_path):
+        print("[*] CHIRP already exists at expected location.")
+        return True, chirpc_path
+    elif os.path.exists(chirp_cli_path):
+        return True, chirp_cli_path
+    
+    try:
+        print("[*] Cloning CHIRP repository...")
+        print("[*] This may take a few minutes...")
+        
+        if os.path.exists(chirp_dir):
+            print("[*] Removing existing chirp directory...")
+            shutil.rmtree(chirp_dir)
+        
+        git_cmd = ['git', 'clone', '--depth', '1', 'https://github.com/kk7ds/chirp.git', chirp_dir]
+        result = subprocess.run(
+            git_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=300,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            error_msg = result.stderr or result.stdout or "Unknown error"
+            print(f"[!] Failed to clone CHIRP repository: {error_msg}")
+            print("[*] Please install manually: git clone https://github.com/kk7ds/chirp")
+            return False, None
+        
+        if not os.path.exists(chirpc_path) and not os.path.exists(chirp_cli_path):
+            print("[!] CHIRP cloned but CLI not found.")
+            return False, None
+        
+        print("[*] CHIRP repository cloned successfully.")
+        print("[*] Installing CHIRP as a Python module...")
+        
+        pip_cmd = get_pip_command()
+        
+        requirements_file = os.path.join(chirp_dir, 'requirements.txt')
+        if os.path.exists(requirements_file):
+            print("[*] Installing CHIRP dependencies...")
+            dep_result = subprocess.run(
+                pip_cmd + ['install', '-q', '-r', requirements_file],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=300,
+                text=True
+            )
+            
+            if dep_result.returncode != 0:
+                print("[!] Warning: Some CHIRP dependencies may have failed to install.")
+                print("[*] You may need to install them manually: pip install -r chirp/requirements.txt")
+            else:
+                print("[*] CHIRP dependencies installed successfully.")
+        else:
+            print("[!] Warning: requirements.txt not found in CHIRP directory.")
+        
+        print("[*] Installing CHIRP module (editable mode)...")
+        install_result = subprocess.run(
+            pip_cmd + ['install', '-q', '-e', chirp_dir],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=300,
+            text=True,
+            cwd=chirp_dir
+        )
+        
+        if install_result.returncode != 0:
+            print("[!] Warning: CHIRP module installation may have failed.")
+            print("[*] CHIRP CLI may still work if dependencies are installed.")
+        else:
+            print("[*] CHIRP module installed successfully.")
+        
+        if os.path.exists(chirpc_path):
+            print("[*] CHIRP installation complete!")
+            return True, chirpc_path
+        elif os.path.exists(chirp_cli_path):
+            print("[*] CHIRP installation complete!")
+            return True, chirp_cli_path
+        else:
+            print("[!] CHIRP installed but CLI not found.")
+            return False, None
+        
+    except subprocess.TimeoutExpired:
+        print("[!] CHIRP installation timed out. Please install manually.")
+        return False, None
+    except Exception as e:
+        print(f"[!] Error installing CHIRP: {str(e)}")
+        print("[*] Please install manually: git clone https://github.com/kk7ds/chirp")
+        return False, None
+
+
+def verify_chirp_installation() -> bool:
+    global CHIRP_VERIFIED
+    
+    if CHIRP_VERIFIED and CHIRP_AVAILABLE:
+        return True
+    
+    chirp_dir = os.path.join(os.path.dirname(__file__), 'chirp')
+    chirpc_path = os.path.join(chirp_dir, 'chirpc')
+    
+    if not os.path.exists(chirp_dir):
+        CHIRP_VERIFIED = True
+        return False
+    
+    if not os.path.exists(chirpc_path):
+        CHIRP_VERIFIED = True
+        return False
+    
+    try:
+        result = subprocess.run(
+            [sys.executable, chirpc_path, '--help'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5
+        )
+        if result.returncode != 0:
+            CHIRP_VERIFIED = True
+            return False
+    except:
+        CHIRP_VERIFIED = True
+        return False
+    
+    try:
+        if chirp_dir not in sys.path:
+            sys.path.insert(0, chirp_dir)
+        importlib.import_module('chirp')
+        importlib.import_module('chirp.cli.main')
+        CHIRP_VERIFIED = True
+        return True
+    except ImportError:
+        CHIRP_VERIFIED = True
+        return False
+
+
+def ensure_chirp_installed():
+    global CHIRP_AVAILABLE, CHIRP_CLI_PATH, CHIRP_VERIFIED
+    
+    if CHIRP_VERIFIED and CHIRP_AVAILABLE and CHIRP_CLI_PATH:
+        return
+    
+    chirp_dir = os.path.join(os.path.dirname(__file__), 'chirp')
+    chirpc_path = os.path.join(chirp_dir, 'chirpc')
+    
+    try:
+        if chirp_dir not in sys.path:
+            sys.path.insert(0, chirp_dir)
+        importlib.import_module('chirp')
+        importlib.import_module('chirp.cli.main')
+        if os.path.exists(chirpc_path):
+            CHIRP_CLI_PATH = chirpc_path
+            CHIRP_AVAILABLE = True
+            CHIRP_VERIFIED = True
+            return
+    except ImportError:
+        pass
+    
+    if not os.path.exists(chirp_dir):
+        print("[*] CHIRP not found. Installing CHIRP...")
+        success, chirp_path = install_chirp()
+        if success:
+            print("[*] CHIRP installed successfully.")
+            CHIRP_VERIFIED = False
+            if verify_chirp_installation():
+                chirpc_path = os.path.join(chirp_dir, 'chirpc')
+                if os.path.exists(chirpc_path):
+                    CHIRP_CLI_PATH = chirpc_path
+                    CHIRP_AVAILABLE = True
+        else:
+            print("[!] CHIRP installation failed. Some features may not work.")
+        return
+    
+    pip_cmd = get_pip_command()
+    check_result = subprocess.run(
+        pip_cmd + ['show', 'chirp'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=5
+    )
+    
+    if check_result.returncode == 0:
+        CHIRP_VERIFIED = True
+        if os.path.exists(chirpc_path):
+            CHIRP_CLI_PATH = chirpc_path
+        return
+    
+    print("[*] Installing CHIRP module in virtual environment (one-time setup)...")
+    install_result = subprocess.run(
+        pip_cmd + ['install', '-q', '-e', chirp_dir],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=300,
+        text=True,
+        cwd=chirp_dir
+    )
+    
+    if install_result.returncode == 0:
+        print("[*] CHIRP module installed successfully.")
+        CHIRP_VERIFIED = False
+        if verify_chirp_installation():
+            if os.path.exists(chirpc_path):
+                CHIRP_CLI_PATH = chirpc_path
+                CHIRP_AVAILABLE = True
+    else:
+        error_msg = install_result.stderr.strip() if install_result.stderr else "Unknown error"
+        print(f"[!] CHIRP module installation failed: {error_msg}")
+        print("[!] Some features may not work. You can try installing manually:")
+        print(f"    {' '.join(pip_cmd)} install -e {chirp_dir}")
+        CHIRP_VERIFIED = True
+        if os.path.exists(chirpc_path):
+            CHIRP_CLI_PATH = chirpc_path
+
+
+def check_chirp_available(auto_install: bool = True) -> Tuple[bool, Optional[str]]:
+    global CHIRP_AVAILABLE, CHIRP_CLI_PATH, CHIRP_INSTALL_ATTEMPTED
+    
+    if CHIRP_CLI_PATH and CHIRP_AVAILABLE:
+        return True, CHIRP_CLI_PATH
+    
+    possible_paths = [
+        os.path.join(os.path.dirname(__file__), 'chirp', 'chirpc'),
+        os.path.join(os.path.dirname(__file__), 'chirp', 'chirp', 'cli', 'main.py'),
+        os.path.join(os.path.expanduser('~'), 'chirp', 'chirpc'),
+        os.path.join(os.path.expanduser('~'), 'chirp', 'chirp', 'cli', 'main.py'),
+        shutil.which('chirpc'),
+    ]
+    
+    for path in possible_paths:
+        if path and os.path.exists(path):
+            try:
+                result = subprocess.run(
+                    [sys.executable, path, '--help'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=10
+                )
+                output = result.stdout.decode('utf-8', errors='ignore') + result.stderr.decode('utf-8', errors='ignore')
+                if result.returncode == 0 or '--download' in output or '--upload' in output:
+                    CHIRP_CLI_PATH = path
+                    CHIRP_AVAILABLE = True
+                    return True, path
+            except:
+                continue
+    
+    if auto_install and not CHIRP_INSTALL_ATTEMPTED:
+        CHIRP_INSTALL_ATTEMPTED = True
+        chirp_dir = os.path.join(os.path.dirname(__file__), 'chirp')
+        chirpc_path = os.path.join(chirp_dir, 'chirpc')
+        chirp_cli_path = os.path.join(chirp_dir, 'chirp', 'cli', 'main.py')
+        
+        if not os.path.exists(chirpc_path) and not os.path.exists(chirp_cli_path):
+            print_status("CHIRP not found. Installing CHIRP on first run...", "info")
+            success, installed_path = install_chirp()
+            if success and installed_path and os.path.exists(installed_path):
+                CHIRP_CLI_PATH = installed_path
+                CHIRP_AVAILABLE = True
+                return True, installed_path
+        else:
+            found_path = chirpc_path if os.path.exists(chirpc_path) else chirp_cli_path
+            CHIRP_CLI_PATH = found_path
+            CHIRP_AVAILABLE = True
+            return True, found_path
+    
+    CHIRP_AVAILABLE = False
+    CHIRP_CLI_PATH = None
+    return False, None
+
+
+def download_from_radio(port: str, radio_model: str, output_file: str, chirp_path: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+    """
+    Download current configuration from radio using CHIRP CLI
+    
+    Args:
+        port: Serial port (e.g., COM3, /dev/ttyUSB0)
+        radio_model: CHIRP radio model ID
+        output_file: Path to save downloaded image file
+        chirp_path: Optional path to chirp.py (auto-detected if None)
+        
+    Returns:
+        Tuple of (success, error_message)
+    """
+    is_available, chirp_cli = check_chirp_available()
+    if not is_available:
+        return False, "CHIRP CLI not found. Please install CHIRP: git clone https://github.com/kk7ds/chirp"
+    
+    if chirp_path:
+        chirp_cli = chirp_path
+    
+    try:
+        print_status(f"Downloading from radio via {port}...", "info")
+        print_status(f"Radio model: {radio_model}", "info")
+        print_status(f"Output file: {output_file}", "info")
+        
+        if chirp_cli.endswith('chirpc') or os.path.basename(chirp_cli) == 'chirpc':
+            cmd = [
+                sys.executable,
+                chirp_cli,
+                '--download',
+                '-p', port,
+                '-m', radio_model,
+                '-f', output_file
+            ]
+        elif 'cli' in chirp_cli:
+            cmd = [
+                sys.executable,
+                '-m', 'chirp.cli.main',
+                '--download',
+                '-p', port,
+                '-m', radio_model,
+                '-f', output_file
+            ]
+        else:
+            cmd = [
+                sys.executable,
+                chirp_cli,
+                '--download',
+                '-p', port,
+                '-m', radio_model,
+                '-f', output_file
+            ]
+        
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            text=True
+        )
+        
+        if result.returncode == 0:
+            if os.path.exists(output_file):
+                print_status(f"Successfully downloaded radio configuration to {output_file}", "success")
+                return True, None
+            else:
+                return False, "Download completed but output file not found"
+        else:
+            error_msg = result.stderr or result.stdout or "Unknown error"
+            return False, f"CHIRP download failed: {error_msg}"
+            
+    except subprocess.TimeoutExpired:
+        return False, "Download timed out after 60 seconds"
+    except Exception as e:
+        return False, f"Error during download: {str(e)}"
+
+
+def upload_to_radio(csv_file: str, port: str, radio_model: str, chirp_path: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+    """
+    Upload CSV file to radio using CHIRP CLI
+    
+    Args:
+        csv_file: Path to CHIRP CSV file
+        port: Serial port (e.g., COM3, /dev/ttyUSB0)
+        radio_model: CHIRP radio model ID
+        chirp_path: Optional path to chirp.py (auto-detected if None)
+        
+    Returns:
+        Tuple of (success, error_message)
+    """
+    is_available, chirp_cli = check_chirp_available()
+    if not is_available:
+        return False, "CHIRP CLI not found. Please install CHIRP: git clone https://github.com/kk7ds/chirp"
+    
+    if chirp_path:
+        chirp_cli = chirp_path
+    
+    if not os.path.exists(csv_file):
+        return False, f"CSV file not found: {csv_file}"
+    
+    try:
+        temp_img = os.path.join(tempfile.gettempdir(), f"chirp_upload_{int(time.time())}.img")
+        
+        print_status(f"Converting CSV to CHIRP image format...", "info")
+        
+        convert_cmd = [
+            sys.executable,
+            chirp_cli,
+            '--import',
+            csv_file,
+            '-m', radio_model,
+            '-f', temp_img
+        ]
+        
+        convert_result = subprocess.run(
+            convert_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            text=True
+        )
+        
+        if convert_result.returncode != 0 or not os.path.exists(temp_img):
+            error_msg = convert_result.stderr or convert_result.stdout or "Unknown error"
+            return False, f"CSV to image conversion failed: {error_msg}"
+        
+        print_status(f"Uploading to radio via {port}...", "info")
+        print_status(f"Radio model: {radio_model}", "info")
+        
+        if chirp_cli.endswith('chirpc') or os.path.basename(chirp_cli) == 'chirpc':
+            upload_cmd = [
+                sys.executable,
+                chirp_cli,
+                '--upload',
+                '-p', port,
+                '-m', radio_model,
+                '-f', temp_img
+            ]
+        elif 'cli' in chirp_cli:
+            upload_cmd = [
+                sys.executable,
+                '-m', 'chirp.cli.main',
+                '--upload',
+                '-p', port,
+                '-m', radio_model,
+                '-f', temp_img
+            ]
+        else:
+            upload_cmd = [
+                sys.executable,
+                chirp_cli,
+                '--upload',
+                '-p', port,
+                '-m', radio_model,
+                '-f', temp_img
+            ]
+        
+        upload_result = subprocess.run(
+            upload_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            text=True
+        )
+        
+        if os.path.exists(temp_img):
+            try:
+                os.remove(temp_img)
+            except:
+                pass
+        
+        if upload_result.returncode == 0:
+            print_status("Successfully uploaded to radio!", "success")
+            return True, None
+        else:
+            error_msg = upload_result.stderr or upload_result.stdout or "Unknown error"
+            return False, f"CHIRP upload failed: {error_msg}"
+            
+    except subprocess.TimeoutExpired:
+        return False, "Upload timed out after 60 seconds"
+    except Exception as e:
+        return False, f"Error during upload: {str(e)}"
+
+
 def preview_upload(csv_file: str, radio_model: str, port: str, frequencies: List[Dict], 
                    baudrate: int = 9600, chirp_id: str = "Generic") -> None:
     """
@@ -955,7 +1469,6 @@ def restore_from_backup(backup_file: str) -> bool:
 
 
 def run_import_menu():
-    """Run the CSV import to handheld radio menu"""
     clear_screen()
     print_banner()
     
@@ -1099,15 +1612,40 @@ def run_import_menu():
     confirm = get_user_input("\nReady to upload? (y/n): ", Colors.WARNING)
     
     if confirm.lower() in ['y', 'yes']:
-        print_status("Upload functionality requires USB cable connection.", "info")
-        print_status("To complete upload, use CHIRP software:", "info")
-        print(f"  1. Open CHIRP")
-        print(f"  2. Select radio model: {chirp_id}")
-        print(f"  3. Set serial port: {port} (Baudrate: {baudrate})")
-        print(f"  4. Load your CSV file: {csv_file}")
-        print(f"  5. Upload to radio")
-        if backup_file:
-            print(f"  6. Backup saved at: {backup_file}")
+        is_available, chirp_path = check_chirp_available()
+        
+        if is_available:
+            print_status("CHIRP CLI detected. Attempting direct upload...", "info")
+            success, error_msg = upload_to_radio(csv_file, port, chirp_id, chirp_path)
+            
+            if success:
+                print_status("Upload completed successfully!", "success")
+                if backup_file:
+                    print_status(f"Backup saved at: {backup_file}", "info")
+            else:
+                print_status(f"Direct upload failed: {error_msg}", "error")
+                print_status("\nFalling back to manual CHIRP instructions:", "warning")
+                print_status("To complete upload manually, use CHIRP software:", "info")
+                print(f"  1. Open CHIRP")
+                print(f"  2. Select radio model: {chirp_id}")
+                print(f"  3. Set serial port: {port} (Baudrate: {baudrate})")
+                print(f"  4. Load your CSV file: {csv_file}")
+                print(f"  5. Upload to radio")
+                if backup_file:
+                    print(f"  6. Backup saved at: {backup_file}")
+        else:
+            print_status("CHIRP CLI not found. Using manual method.", "info")
+            print_status("To enable direct upload, install CHIRP:", "info")
+            print_status("  git clone https://github.com/kk7ds/chirp", "info")
+            print_status("  cd chirp && python3 -m pip install -r requirements.txt", "info")
+            print_status("\nTo complete upload manually, use CHIRP software:", "info")
+            print(f"  1. Open CHIRP")
+            print(f"  2. Select radio model: {chirp_id}")
+            print(f"  3. Set serial port: {port} (Baudrate: {baudrate})")
+            print(f"  4. Load your CSV file: {csv_file}")
+            print(f"  5. Upload to radio")
+            if backup_file:
+                print(f"  6. Backup saved at: {backup_file}")
     else:
         print_status("Upload cancelled.", "info")
     
@@ -1115,7 +1653,6 @@ def run_import_menu():
 
 
 def print_status(message: str, status_type: str = "info"):
-    """Print status message with appropriate color"""
     colors = {
         "info": Colors.INFO,
         "success": Colors.SUCCESS,
@@ -1127,7 +1664,6 @@ def print_status(message: str, status_type: str = "info"):
 
 
 class RadioRefToChirp:
-    """Convert Radio Reference data to CHIRP CSV format"""
     
     CHIRP_COLUMNS = [
         'Location', 'Name', 'Frequency', 'Duplex', 'Offset', 'Tone',
@@ -1137,7 +1673,6 @@ class RadioRefToChirp:
     ]
     
     def __init__(self):
-        """Initialize converter"""
         self.base_url = "https://www.radioreference.com"
         self.session = requests.Session()
         self.session.headers.update({
@@ -1145,17 +1680,6 @@ class RadioRefToChirp:
         })
     
     def filter_frequencies(self, frequencies: List[Dict], filter_mode: Optional[str] = None) -> List[Dict]:
-        """
-        Filter frequencies based on mode
-        
-        Args:
-            frequencies: List of frequency dictionaries
-            filter_mode: Mode to filter by (e.g., 'FM', 'Digital', 'DMR', 'P25')
-                        If None, returns all frequencies
-        
-        Returns:
-            Filtered list of frequencies
-        """
         if not filter_mode:
             return frequencies
         
@@ -1311,7 +1835,6 @@ class RadioRefToChirp:
         return self._get_location_from_zip_fallback(zipcode)
     
     def _get_location_from_zip_fallback(self, zipcode: str) -> Optional[Dict]:
-        """Fallback method to get location from ZIP using web lookup"""
         try:
             print_status(f"Looking up ZIP code {zipcode} via web API...", "info")
             response = requests.get(f"https://api.zippopotam.us/us/{zipcode}", timeout=10)
@@ -1339,16 +1862,6 @@ class RadioRefToChirp:
         return None
     
     def _find_county_for_city(self, city: str, state: str) -> Optional[str]:
-        """
-        Find the county name for a given city and state
-        
-        Args:
-            city: City name
-            state: State abbreviation
-            
-        Returns:
-            County name if found, None otherwise
-        """
         try:
             from uszipcode import SearchEngine
             search = SearchEngine(simple_zipcode=True)
@@ -1435,7 +1948,6 @@ class RadioRefToChirp:
             return []
     
     def _get_state_id(self, state: str) -> Optional[str]:
-        """Get Radio Reference state ID from state abbreviation (for regular queries)"""
         state_map = {
             'AL': '1', 'AK': '2', 'AZ': '3', 'AR': '4', 'CA': '5',
             'CO': '6', 'CT': '7', 'DE': '8', 'FL': '9', 'GA': '10',
@@ -1473,16 +1985,6 @@ class RadioRefToChirp:
         return dropdown_state_map.get(state.upper())
     
     def _get_known_county_id(self, county: str, state: str) -> Optional[str]:
-        """
-        Check known county ID mappings
-        
-        Args:
-            county: County name
-            state: State abbreviation
-            
-        Returns:
-            County ID if known, None otherwise
-        """
         known_counties = {
             ('sanders', 'mt'): '1638',
             ('king', 'wa'): '2974',
@@ -2233,7 +2735,7 @@ class RadioRefToChirp:
             }
             
             headers = {
-                'User-Agent': 'RadioFrequencyHarvester/1.0 (https://github.com/InfoSecREDD/radiorefexport)'
+                'User-Agent': 'RadioFrequencyHarvester/1.1 (https://github.com/InfoSecREDD/radiorefexport)'
             }
             
             response = self.session.get(api_url, params=params, headers=headers, timeout=5)
@@ -2638,7 +3140,6 @@ class RadioRefToChirp:
     
     def _parse_html_response(self, html: str, state: str, county: Optional[str] = None,
                             city: Optional[str] = None) -> List[Dict]:
-        """Parse HTML page to extract frequency data from Radio Reference tables"""
         try:
             from bs4 import BeautifulSoup
         except ImportError:
@@ -2933,7 +3434,6 @@ class RadioRefToChirp:
 
 
 def run_cli_mode(args):
-    """Run in command-line mode"""
     converter = RadioRefToChirp()
     frequencies = []
     
@@ -2975,7 +3475,6 @@ def run_cli_mode(args):
 
 
 def run_interactive_mode():
-    """Run in interactive menu mode"""
     clear_screen()
     print_banner()
     
@@ -3147,6 +3646,106 @@ def run_interactive_mode():
             
         elif choice in ['4', 'import', 'upload']:
             run_import_menu()
+            clear_screen()
+            print_banner()
+        
+        elif choice in ['5', 'backup', 'save']:
+            clear_screen()
+            print_banner()
+            print(f"\n{Colors.HEADER}{'='*60}{Colors.RESET}")
+            print(f"{Colors.HEADER}  CREATE BACKUP{Colors.RESET}")
+            print(f"{Colors.HEADER}{'='*60}{Colors.RESET}\n")
+            
+            csv_file = get_user_input("Enter path to CHIRP CSV file: ", Colors.INFO)
+            if not csv_file:
+                print_status("No file specified.", "error")
+                input(f"\n{Colors.INFO}Press Enter to return to menu...{Colors.RESET}")
+                clear_screen()
+                print_banner()
+                continue
+            
+            if not os.path.exists(csv_file):
+                print_status(f"File not found: {csv_file}", "error")
+                input(f"\n{Colors.INFO}Press Enter to return to menu...{Colors.RESET}")
+                clear_screen()
+                print_banner()
+                continue
+            
+            is_valid, message, frequencies = validate_chirp_csv(csv_file)
+            if not is_valid:
+                print_status(f"CSV validation failed: {message}", "error")
+                input(f"\n{Colors.INFO}Press Enter to return to menu...{Colors.RESET}")
+                clear_screen()
+                print_banner()
+                continue
+            
+            print_status(f"Loaded {len(frequencies)} frequencies from CSV.", "success")
+            
+            selected_radio = get_selected_radio_model()
+            if selected_radio:
+                radio_model = selected_radio['name']
+                print(f"\n{Colors.INFO}Using selected radio model: {Colors.SUCCESS}{radio_model}{Colors.RESET}")
+                use_selected = get_user_input("Use this radio model? (y/n, default: y): ", Colors.INFO)
+                if use_selected.lower() in ['n', 'no']:
+                    radio_model = get_user_input("Enter radio model name: ", Colors.INFO)
+                    if not radio_model:
+                        print_status("Radio model is required.", "error")
+                        input(f"\n{Colors.INFO}Press Enter to return to menu...{Colors.RESET}")
+                        clear_screen()
+                        print_banner()
+                        continue
+            else:
+                radio_model = get_user_input("Enter radio model name: ", Colors.INFO)
+                if not radio_model:
+                    print_status("Radio model is required.", "error")
+                    input(f"\n{Colors.INFO}Press Enter to return to menu...{Colors.RESET}")
+                    clear_screen()
+                    print_banner()
+                    continue
+            
+            ports = detect_serial_ports()
+            port = None
+            
+            if ports:
+                print(f"\n{Colors.INFO}Available serial ports:{Colors.RESET}\n")
+                for idx, (port_name, description) in enumerate(ports, 1):
+                    print(f"  {Colors.INFO}[{idx}]{Colors.RESET} {Colors.HEADER}{port_name}{Colors.RESET}")
+                    print(f"      {Colors.DIM}{description}{Colors.RESET}\n")
+                
+                port_choice = get_user_input(f"Select port (1-{len(ports)}) or enter custom port: ", Colors.INFO)
+                if port_choice:
+                    try:
+                        port_idx = int(port_choice) - 1
+                        if 0 <= port_idx < len(ports):
+                            port = ports[port_idx][0]
+                        else:
+                            port = port_choice
+                    except ValueError:
+                        port = port_choice
+            else:
+                port = get_user_input("Enter serial port manually (e.g., COM3, /dev/ttyUSB0): ", Colors.INFO)
+            
+            if not port:
+                print_status("Serial port is required.", "error")
+                input(f"\n{Colors.INFO}Press Enter to return to menu...{Colors.RESET}")
+                clear_screen()
+                print_banner()
+                continue
+            
+            print_status("Creating backup...", "info")
+            backup_file = create_backup_file(radio_model, port, frequencies=frequencies, csv_file=csv_file)
+            
+            if backup_file:
+                print_status(f"Backup created successfully: {backup_file}", "success")
+                print(f"\n{Colors.INFO}Backup contains:{Colors.RESET}")
+                print(f"  - Radio Model: {radio_model}")
+                print(f"  - Serial Port: {port}")
+                print(f"  - Frequencies: {len(frequencies)}")
+                print(f"  - CSV File: {csv_file}")
+            else:
+                print_status("Failed to create backup.", "error")
+            
+            input(f"\n{Colors.INFO}Press Enter to return to menu...{Colors.RESET}")
             clear_screen()
             print_banner()
         
@@ -3491,7 +4090,7 @@ def run_interactive_mode():
             clear_screen()
             print_banner()
         
-        elif choice in ['12', 'backups', 'backup']:
+        elif choice in ['12', 'backups', 'viewbackups']:
             clear_screen()
             print_banner()
             print(f"\n{Colors.HEADER}{'='*60}{Colors.RESET}")
@@ -3564,14 +4163,16 @@ def run_interactive_mode():
         else:
             clear_screen()
             print_banner()
-            print_status("Invalid option. Please select 1-10, or 0/Q to exit.", "error")
+            print_status("Invalid option. Please select 1-13, or 0/Q to exit.", "error")
             time.sleep(2)
             clear_screen()
             print_banner()
 
 
+ensure_chirp_installed()
+
+
 def main():
-    """Main entry point - checks for CLI args or runs interactive mode"""
     parser = argparse.ArgumentParser(
         description='Convert Radio Reference data to CHIRP CSV format via web scraping',
         formatter_class=argparse.RawDescriptionHelpFormatter,
