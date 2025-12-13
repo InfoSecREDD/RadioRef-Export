@@ -297,7 +297,7 @@ def print_banner():
 {COLOR_BOX}║{Colors.RESET}                                                           {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}    ════════════════════════════════════════════════════   {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}                                                           {COLOR_BOX}║{Colors.RESET}
-{COLOR_BOX}║{Colors.RESET}    {Colors.HEADER}  RADIO FREQUENCY HARVESTER v1.1.1{Colors.RESET}                     {COLOR_BOX}║{Colors.RESET}
+{COLOR_BOX}║{Colors.RESET}    {Colors.HEADER}  RADIO FREQUENCY HARVESTER v1.2.0{Colors.RESET}                     {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}    {Colors.WARNING}  Scraping Radio Reference → CHIRP CSV{Colors.RESET}                 {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}                                                           {COLOR_BOX}║{Colors.RESET}
 {COLOR_BOX}║{Colors.RESET}    {Colors.DIM}              Created by InfoSecREDD{Colors.RESET}                   {COLOR_BOX}║{Colors.RESET}
@@ -3336,7 +3336,7 @@ class RadioRefToChirp:
             }
             
             headers = {
-                'User-Agent': 'RadioFrequencyHarvester/1.1.1 (https://github.com/InfoSecREDD/radiorefexport)'
+                'User-Agent': 'RadioFrequencyHarvester/1.2.0 (https://github.com/InfoSecREDD/radiorefexport)'
             }
             
             response = self.session.get(api_url, params=params, headers=headers, timeout=5)
