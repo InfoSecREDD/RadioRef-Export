@@ -124,8 +124,14 @@ def get_pip_command():
 def check_and_install_dependencies():
     missing_packages = []
     
+    import_name_map = {
+        'bs4': 'bs4',
+        'pyserial': 'serial',
+        'python-Levenshtein': 'Levenshtein'
+    }
+    
     for package_name, package_spec in REQUIRED_PACKAGES.items():
-        import_name = 'bs4' if package_name == 'bs4' else package_name
+        import_name = import_name_map.get(package_name, package_name)
         
         spec = importlib.util.find_spec(import_name)
         if spec is None:
@@ -140,6 +146,7 @@ def check_and_install_dependencies():
         pip_name = ' '.join(pip_cmd)
         
         try:
+            playwright_installed = False
             for package in missing_packages:
                 print(f"  Installing {package}...")
                 result = subprocess.run(
@@ -171,23 +178,65 @@ def check_and_install_dependencies():
                         )
                         if result.returncode != 0:
                             raise subprocess.CalledProcessError(result.returncode, pip_name)
+                
+                if package == 'playwright':
+                    playwright_installed = True
+            
+            if playwright_installed:
+                print("  Installing Playwright browser binaries (this may take a minute)...")
+                try:
+                    playwright_cmd = [sys.executable, '-m', 'playwright', 'install', 'chromium']
+                    if os.environ.get('VIRTUAL_ENV'):
+                        venv_dir = os.environ.get('VIRTUAL_ENV')
+                        if sys.platform == 'win32':
+                            playwright_cmd = [os.path.join(venv_dir, 'Scripts', 'python.exe'), '-m', 'playwright', 'install', 'chromium']
+                        else:
+                            playwright_cmd = [os.path.join(venv_dir, 'bin', 'python3'), '-m', 'playwright', 'install', 'chromium']
+                    
+                    browser_result = subprocess.run(
+                        playwright_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=300
+                    )
+                    if browser_result.returncode == 0:
+                        if 'already installed' in browser_result.stdout.lower() or 'already installed' in browser_result.stderr.lower():
+                            print("  ✓ Playwright browser binaries already installed")
+                        else:
+                            print("  ✓ Playwright browser binaries installed successfully")
+                    else:
+                        stderr_output = browser_result.stderr.lower() if browser_result.stderr else ''
+                        if 'already installed' in stderr_output:
+                            print("  ✓ Playwright browser binaries already installed")
+                        else:
+                            print("  ⚠ Warning: Playwright browser installation may have failed")
+                            print("  You may need to run manually: python -m playwright install chromium")
+                except subprocess.TimeoutExpired:
+                    print("  ⚠ Warning: Playwright browser installation timed out")
+                    print("  You may need to run manually: python -m playwright install chromium")
+                except Exception as e:
+                    print(f"  ⚠ Warning: Error installing Playwright browsers: {e}")
+                    print("  You may need to run manually: python -m playwright install chromium")
+            
             print("✓ All dependencies installed successfully!\n")
         except subprocess.CalledProcessError as e:
             print(f"\n⚠ Warning: Failed to automatically install some dependencies.")
             print(f"Please install manually with: {pip_name} install {' '.join(missing_packages)}\n")
+            if 'playwright' in missing_packages:
+                print("After installing playwright, also run: python -m playwright install chromium\n")
             print("You can also use: pip install -r requirements.txt\n")
             sys.exit(1)
         except Exception as e:
             print(f"\n⚠ Warning: Error installing dependencies: {e}")
             print(f"Please install manually with: {pip_name} install {' '.join(missing_packages)}\n")
+            if 'playwright' in missing_packages:
+                print("After installing playwright, also run: python -m playwright install chromium\n")
             print("You can also use: pip install -r requirements.txt\n")
             sys.exit(1)
 
 
 check_and_install_dependencies()
-
-import warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='fuzzywuzzy')
 
 import argparse
 import requests
@@ -414,6 +463,8 @@ def print_menu():
     print(f"{Colors.INFO}[11]{Colors.RESET} Convert CSV to TXT {Colors.DIM}(or: convert, csv2txt){Colors.RESET}")
     print(f"{Colors.INFO}[12]{Colors.RESET} View Backup Files {Colors.DIM}(or: backups, viewbackups){Colors.RESET}")
     print(f"{Colors.INFO}[13]{Colors.RESET} Build County Cache {Colors.DIM}(or: cache, buildcache){Colors.RESET}")
+    print(f"{Colors.INFO}[14]{Colors.RESET} Add GMRS/FRS Channels {Colors.DIM}(or: gmrs, frs){Colors.RESET}")
+    print(f"{Colors.INFO}[15]{Colors.RESET} Add NOAA Weather Channels {Colors.DIM}(or: weather, wx, noaa){Colors.RESET}")
     print()
     print(f"{Colors.INFO}[0/Q]{Colors.RESET} Exit {Colors.DIM}(or: quit, exit){Colors.RESET}")
     print(f"\n{Colors.HEADER}{'='*60}{Colors.RESET}\n")
@@ -2232,6 +2283,126 @@ class RadioRefToChirp:
         state = state.upper()
         return self._fetch_via_scraping(state=state, county=county)
     
+    def generate_gmrs_frs_channels(self) -> List[Dict]:
+        """
+        Generate standard GMRS/FRS channel frequencies
+        
+        Returns:
+            List of frequency dictionaries for all 22 GMRS/FRS channels
+        """
+        channels = [
+            {'channel': 1, 'frequency': 462.5625, 'name': 'FRS/GMRS 1', 'power': '2W FRS / 5W GMRS'},
+            {'channel': 2, 'frequency': 462.5875, 'name': 'FRS/GMRS 2', 'power': '2W FRS / 5W GMRS'},
+            {'channel': 3, 'frequency': 462.6125, 'name': 'FRS/GMRS 3', 'power': '2W FRS / 5W GMRS'},
+            {'channel': 4, 'frequency': 462.6375, 'name': 'FRS/GMRS 4', 'power': '2W FRS / 5W GMRS'},
+            {'channel': 5, 'frequency': 462.6625, 'name': 'FRS/GMRS 5', 'power': '2W FRS / 5W GMRS'},
+            {'channel': 6, 'frequency': 462.6875, 'name': 'FRS/GMRS 6', 'power': '2W FRS / 5W GMRS'},
+            {'channel': 7, 'frequency': 462.7125, 'name': 'FRS/GMRS 7', 'power': '2W FRS / 5W GMRS'},
+            {'channel': 8, 'frequency': 467.5625, 'name': 'FRS 8', 'power': '0.5W FRS only'},
+            {'channel': 9, 'frequency': 467.5875, 'name': 'FRS 9', 'power': '0.5W FRS only'},
+            {'channel': 10, 'frequency': 467.6125, 'name': 'FRS 10', 'power': '0.5W FRS only'},
+            {'channel': 11, 'frequency': 467.6375, 'name': 'FRS 11', 'power': '0.5W FRS only'},
+            {'channel': 12, 'frequency': 467.6625, 'name': 'FRS 12', 'power': '0.5W FRS only'},
+            {'channel': 13, 'frequency': 467.6875, 'name': 'FRS 13', 'power': '0.5W FRS only'},
+            {'channel': 14, 'frequency': 467.7125, 'name': 'FRS 14', 'power': '0.5W FRS only'},
+            {'channel': 15, 'frequency': 462.5500, 'name': 'FRS/GMRS 15', 'power': '2W FRS / 50W GMRS'},
+            {'channel': 16, 'frequency': 462.5750, 'name': 'FRS/GMRS 16', 'power': '2W FRS / 50W GMRS'},
+            {'channel': 17, 'frequency': 462.6000, 'name': 'FRS/GMRS 17', 'power': '2W FRS / 50W GMRS'},
+            {'channel': 18, 'frequency': 462.6250, 'name': 'FRS/GMRS 18', 'power': '2W FRS / 50W GMRS'},
+            {'channel': 19, 'frequency': 462.6500, 'name': 'FRS/GMRS 19', 'power': '2W FRS / 50W GMRS'},
+            {'channel': 20, 'frequency': 462.6750, 'name': 'FRS/GMRS 20', 'power': '2W FRS / 50W GMRS'},
+            {'channel': 21, 'frequency': 462.7000, 'name': 'FRS/GMRS 21', 'power': '2W FRS / 50W GMRS'},
+            {'channel': 22, 'frequency': 462.7250, 'name': 'FRS/GMRS 22', 'power': '2W FRS / 50W GMRS'},
+        ]
+        
+        frequencies = []
+        for ch in channels:
+            freq_dict = {
+                'Location': '',
+                'Name': ch['name'],
+                'Frequency': f"{ch['frequency']:.4f}",
+                'Duplex': '',
+                'Offset': '',
+                'Tone': '',
+                'rToneFreq': '',
+                'cToneFreq': '',
+                'DtcsCode': '',
+                'DtcsPolarity': '',
+                'RxDtcsCode': '',
+                'CrossMode': '',
+                'Mode': 'FM',
+                'TStep': '5.00',
+                'Skip': '',
+                'Comment': f"Channel {ch['channel']} - {ch['power']}",
+                'URCALL': '',
+                'RPT1CALL': '',
+                'RPT2CALL': '',
+                'DVCODE': ''
+            }
+            frequencies.append(freq_dict)
+        
+        return frequencies
+    
+    def generate_noaa_weather_channels(self, location_info: Optional[Dict] = None) -> List[Dict]:
+        """
+        Generate NOAA Weather Radio channel frequencies
+        
+        Args:
+            location_info: Optional dict with 'state', 'county', 'city' for location-specific info
+            
+        Returns:
+            List of frequency dictionaries for all 7 NOAA weather channels
+        """
+        weather_frequencies = [
+            162.400,
+            162.425,
+            162.450,
+            162.475,
+            162.500,
+            162.525,
+            162.550
+        ]
+        
+        location_note = ""
+        if location_info:
+            parts = []
+            if location_info.get('city'):
+                parts.append(location_info['city'])
+            if location_info.get('county'):
+                parts.append(f"{location_info['county']} County")
+            if location_info.get('state'):
+                parts.append(location_info['state'])
+            if parts:
+                location_note = f" for {', '.join(parts)}"
+        
+        frequencies = []
+        for idx, freq in enumerate(weather_frequencies, 1):
+            freq_dict = {
+                'Location': '',
+                'Name': f'NOAA WX {idx}',
+                'Frequency': f"{freq:.3f}",
+                'Duplex': '',
+                'Offset': '',
+                'Tone': '',
+                'rToneFreq': '',
+                'cToneFreq': '',
+                'DtcsCode': '',
+                'DtcsPolarity': '',
+                'RxDtcsCode': '',
+                'CrossMode': '',
+                'Mode': 'FM',
+                'TStep': '5.00',
+                'Skip': '',
+                'Comment': f"NOAA Weather Radio {freq:.3f} MHz{location_note} - Test all frequencies to find active transmitter",
+                'URCALL': '',
+                'RPT1CALL': '',
+                'RPT2CALL': '',
+                'DVCODE': ''
+            }
+            frequencies.append(freq_dict)
+        
+        return frequencies
+    
     def _get_location_from_zip(self, zipcode: str) -> Optional[Dict]:
         """
         Get location information from ZIP code
@@ -3867,7 +4038,19 @@ def run_cli_mode(args):
     converter = RadioRefToChirp()
     frequencies = []
     
-    if args.zipcode:
+    if args.gmrs_frs:
+        frequencies = converter.generate_gmrs_frs_channels()
+        print_status(f"Generated {len(frequencies)} GMRS/FRS channels", "success")
+    elif args.weather:
+        location_info = None
+        if args.weather_zip:
+            print_status(f"Looking up location for ZIP: {args.weather_zip}", "info")
+            location_info = converter._get_location_from_zip(args.weather_zip)
+            if location_info:
+                print_status(f"Found: {location_info.get('city', 'N/A')}, {location_info.get('county', 'N/A')}, {location_info.get('state', 'N/A')}", "success")
+        frequencies = converter.generate_noaa_weather_channels(location_info)
+        print_status(f"Generated {len(frequencies)} NOAA Weather channels", "success")
+    elif args.zipcode:
         frequencies = converter.lookup_by_zipcode(args.zipcode)
     elif args.city:
         if not args.state:
@@ -3879,6 +4062,9 @@ def run_cli_mode(args):
             print_status("--state is required when using --county", "error")
             sys.exit(1)
         frequencies = converter.lookup_by_county_state(args.county, args.state)
+    else:
+        print_status("Please specify an input method (--zipcode, --city, --county, --gmrs-frs, or --weather)", "error")
+        sys.exit(1)
     
     if frequencies and args.filter:
         original_count = len(frequencies)
@@ -4589,11 +4775,103 @@ def run_interactive_mode():
             
             clear_screen()
             print_banner()
+        
+        elif choice in ['14', 'gmrs', 'frs']:
+            clear_screen()
+            print_banner()
+            print(f"\n{Colors.HEADER}{'='*60}{Colors.RESET}")
+            print(f"{Colors.HEADER}  ADD GMRS/FRS CHANNELS{Colors.RESET}")
+            print(f"{Colors.HEADER}{'='*60}{Colors.RESET}\n")
+            
+            print(f"{Colors.INFO}This will add all 22 standard GMRS/FRS channels to your CSV file.{Colors.RESET}")
+            print(f"{Colors.DIM}Channels 1-7, 15-22: Shared FRS/GMRS (2W FRS / 5-50W GMRS){Colors.RESET}")
+            print(f"{Colors.DIM}Channels 8-14: FRS only (0.5W){Colors.RESET}\n")
+            
+            output_file = get_user_input("Output filename (default: gmrs_frs_channels.csv): ", Colors.INFO)
+            if not output_file:
+                output_file = "gmrs_frs_channels.csv"
+            
+            format_choice = get_user_input("Format? (csv/txt, or press Enter for auto-detect): ", Colors.INFO)
+            if not format_choice:
+                if output_file.lower().endswith('.txt'):
+                    format_choice = 'txt'
+                else:
+                    format_choice = 'csv'
+            
+            append_choice = get_user_input("Append to existing file? (y/n, default: n): ", Colors.INFO)
+            append_mode = append_choice.lower() in ['y', 'yes']
+            
+            frequencies = converter.generate_gmrs_frs_channels()
+            
+            if frequencies:
+                if format_choice.lower() == 'txt':
+                    converter.to_txt(frequencies, output_file, append=append_mode)
+                else:
+                    converter.to_chirp_csv(frequencies, output_file, append=append_mode)
+                print_status(f"Added {len(frequencies)} GMRS/FRS channels to {output_file}", "success")
+                print(f"\n{Colors.INFO}Note: GMRS requires an FCC license. FRS channels 1-7 and 15-22 can be used without a license.{Colors.RESET}\n")
+            else:
+                print_status("Error generating GMRS/FRS channels.", "error")
+            
+            input(f"\n{Colors.INFO}Press Enter to continue...{Colors.RESET}")
+            clear_screen()
+            print_banner()
+        
+        elif choice in ['15', 'weather', 'wx', 'noaa']:
+            clear_screen()
+            print_banner()
+            print(f"\n{Colors.HEADER}{'='*60}{Colors.RESET}")
+            print(f"{Colors.HEADER}  ADD NOAA WEATHER CHANNELS{Colors.RESET}")
+            print(f"{Colors.HEADER}{'='*60}{Colors.RESET}\n")
+            
+            print(f"{Colors.INFO}This will add all 7 NOAA Weather Radio frequencies.{Colors.RESET}")
+            print(f"{Colors.DIM}Not all frequencies may be active in your area - test to find which ones work.{Colors.RESET}\n")
+            
+            location_choice = get_user_input("Add location info? Enter ZIP code (or press Enter to skip): ", Colors.INFO)
+            location_info = None
+            
+            if location_choice:
+                print_status(f"Looking up location for ZIP: {location_choice}", "info")
+                location_info = converter._get_location_from_zip(location_choice)
+                if location_info:
+                    print_status(f"Found: {location_info.get('city', 'N/A')}, {location_info.get('county', 'N/A')}, {location_info.get('state', 'N/A')}", "success")
+                else:
+                    print_status("Could not determine location. Adding channels without location info.", "warning")
+            
+            output_file = get_user_input("Output filename (default: weather_channels.csv): ", Colors.INFO)
+            if not output_file:
+                output_file = "weather_channels.csv"
+            
+            format_choice = get_user_input("Format? (csv/txt, or press Enter for auto-detect): ", Colors.INFO)
+            if not format_choice:
+                if output_file.lower().endswith('.txt'):
+                    format_choice = 'txt'
+                else:
+                    format_choice = 'csv'
+            
+            append_choice = get_user_input("Append to existing file? (y/n, default: n): ", Colors.INFO)
+            append_mode = append_choice.lower() in ['y', 'yes']
+            
+            frequencies = converter.generate_noaa_weather_channels(location_info)
+            
+            if frequencies:
+                if format_choice.lower() == 'txt':
+                    converter.to_txt(frequencies, output_file, append=append_mode)
+                else:
+                    converter.to_chirp_csv(frequencies, output_file, append=append_mode)
+                print_status(f"Added {len(frequencies)} NOAA Weather channels to {output_file}", "success")
+                print(f"\n{Colors.INFO}Note: Test all 7 frequencies (162.400-162.550 MHz) to find which transmitter is active in your area.{Colors.RESET}\n")
+            else:
+                print_status("Error generating weather channels.", "error")
+            
+            input(f"\n{Colors.INFO}Press Enter to continue...{Colors.RESET}")
+            clear_screen()
+            print_banner()
             
         else:
             clear_screen()
             print_banner()
-            print_status("Invalid option. Please select 1-13, or 0/Q to exit.", "error")
+            print_status("Invalid option. Please select 1-15, or 0/Q to exit.", "error")
             time.sleep(2)
             clear_screen()
             print_banner()
@@ -4618,6 +4896,10 @@ Examples:
 
   python getradios.py --city "Auburn" --state WA --filter Digital --output digital_only.csv
 
+  python getradios.py --gmrs-frs --output gmrs_channels.csv
+
+  python getradios.py --weather --weather-zip 90210 --output weather_channels.csv
+
   python getradios.py
 
 Note: Use responsibly and comply with Radio Reference Terms of Service.
@@ -4628,6 +4910,10 @@ Note: Use responsibly and comply with Radio Reference Terms of Service.
     input_group.add_argument('--zipcode', type=str, help='5-digit ZIP code')
     input_group.add_argument('--city', type=str, help='City name')
     input_group.add_argument('--county', type=str, help='County name')
+    input_group.add_argument('--gmrs-frs', action='store_true', 
+                            help='Generate GMRS/FRS channels (22 standard channels)')
+    input_group.add_argument('--weather', action='store_true',
+                            help='Generate NOAA Weather Radio channels (7 standard frequencies)')
     
     parser.add_argument('--state', type=str, help='State abbreviation (required for city/county)')
     parser.add_argument('--output', '-o', type=str, default='frequencies.csv', 
@@ -4638,10 +4924,12 @@ Note: Use responsibly and comply with Radio Reference Terms of Service.
                        help='Output format: csv (CHIRP format) or txt (human-readable). Auto-detected from file extension if not specified.')
     parser.add_argument('--append', '-a', action='store_true',
                        help='Append to existing file instead of overwriting')
+    parser.add_argument('--weather-zip', type=str,
+                       help='ZIP code for location-specific weather channel info (use with --weather)')
     
     args = parser.parse_args()
     
-    has_cli_args = args.zipcode or args.city or args.county
+    has_cli_args = args.zipcode or args.city or args.county or args.gmrs_frs or args.weather
     
     if has_cli_args:
         run_cli_mode(args)
