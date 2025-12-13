@@ -32,6 +32,8 @@ A powerful Python script that pulls frequency data from Radio Reference via web 
 - **Filter Existing CSV**: Apply mode filters to existing CSV files
 - **Convert CSV to TXT**: Convert CHIRP CSV files to human-readable text format
 - **View Serial Ports**: List all available USB serial ports
+- **GMRS/FRS Channels**: Generate all 22 standard GMRS/FRS channel frequencies (462-467 MHz)
+- **NOAA Weather Channels**: Generate all 7 NOAA Weather Radio frequencies (162.400-162.550 MHz) with optional location-specific info
 
 ## Installation
 
@@ -43,9 +45,16 @@ The script will automatically detect and use the correct `pip` or `pip3` command
 - `colorama` - Colored terminal output
 - `uszipcode` - ZIP code lookup (with automatic fallback)
 - `lxml` - HTML parser backend
-- `python-Levenshtein` - Fast string matching (speeds up fuzzywuzzy)
+- `python-Levenshtein` - Fast string matching library
 - `pyserial` - Serial port detection
 - `playwright` - JavaScript rendering for dynamic content
+  - **Note**: Playwright browser binaries (Chromium) are automatically installed after the package
+
+All dependencies are automatically installed and configured on first run. The script handles:
+- Virtual environment creation and activation
+- Package installation with fallback methods
+- Playwright browser binary installation
+- Import name mapping (e.g., `pyserial` → `serial`, `beautifulsoup4` → `bs4`)
 
 ## Usage
 
@@ -74,6 +83,8 @@ The script displays a colorful ASCII art banner and interactive menu with the fo
 11. **Convert CSV to TXT** - Convert CSV to human-readable text
 12. **View Backup Files** - Browse and manage backup files
 13. **Build County Cache** - Build cache of county IDs for faster lookups
+14. **Add GMRS/FRS Channels** - Generate all 22 standard GMRS/FRS channels
+15. **Add NOAA Weather Channels** - Generate all 7 NOAA Weather Radio frequencies
 
 ### Command-Line Mode
 
@@ -97,6 +108,12 @@ python getradios.py --zipcode 90210 --format txt --output frequencies.txt
 
 # Append to existing file
 python getradios.py --zipcode 90210 --output frequencies.csv --append
+
+# Generate GMRS/FRS channels
+python getradios.py --gmrs-frs --output gmrs_channels.csv
+
+# Generate NOAA Weather channels with location info
+python getradios.py --weather --weather-zip 90210 --output weather_channels.csv
 ```
 
 ### Command-Line Options
@@ -105,6 +122,9 @@ python getradios.py --zipcode 90210 --output frequencies.csv --append
 - `--city`: City name
 - `--county`: County name
 - `--state`: State abbreviation (required for city/county queries)
+- `--gmrs-frs`: Generate GMRS/FRS channels (22 standard channels)
+- `--weather`: Generate NOAA Weather Radio channels (7 standard frequencies)
+- `--weather-zip`: ZIP code for location-specific weather channel info (use with --weather)
 - `--output` / `-o`: Output file path (default: frequencies.csv)
 - `--format`: Output format - `csv` (default) or `txt`
 - `--filter` / `-f`: Filter by mode (FM, Digital, DMR, P25, etc.)
@@ -120,6 +140,8 @@ The interactive menu supports text shortcuts for faster navigation:
 - `import` or `upload` - Import CSV to Handheld
 - `backup` or `save` - Create Backup
 - `restore` - Restore from Backup
+- `gmrs` or `frs` - Add GMRS/FRS Channels
+- `weather`, `wx`, or `noaa` - Add NOAA Weather Channels
 - `validate` - Validate CSV File
 - `ports` or `serial` - View Serial Ports
 - `models`, `radios`, or `select` - Select Radio Model
@@ -200,6 +222,42 @@ Supported manufacturers include:
 
 Radio settings (baudrate, max channels, memory format) are automatically configured based on CHIRP's official driver specifications.
 
+## GMRS/FRS Channels
+
+The script can generate all 22 standard GMRS/FRS channel frequencies:
+
+- **Channels 1-7**: Shared FRS/GMRS (462.5625-462.7125 MHz) - 2W FRS / 5W GMRS
+- **Channels 8-14**: FRS only (467.5625-467.7125 MHz) - 0.5W FRS only
+- **Channels 15-22**: Shared FRS/GMRS (462.5500-462.7250 MHz) - 2W FRS / 50W GMRS
+
+**Important Notes:**
+- FRS channels 1-7 and 15-22 can be used without a license
+- FRS channels 8-14 are FRS-only (0.5W maximum)
+- GMRS requires an FCC license
+- Channels 15-22 support higher power for GMRS operations (up to 50W)
+
+Use menu option **14** or `--gmrs-frs` in CLI mode to generate these channels.
+
+## NOAA Weather Channels
+
+The script can generate all 7 NOAA Weather Radio frequencies:
+
+- **162.400 MHz** - NOAA WX 1
+- **162.425 MHz** - NOAA WX 2
+- **162.450 MHz** - NOAA WX 3
+- **162.475 MHz** - NOAA WX 4
+- **162.500 MHz** - NOAA WX 5
+- **162.525 MHz** - NOAA WX 6
+- **162.550 MHz** - NOAA WX 7
+
+**Important Notes:**
+- Not all frequencies may be active in your area
+- Test all 7 frequencies to find which transmitter is active near you
+- You can optionally provide a ZIP code to add location-specific information to channel comments
+- Weather channels are broadcast continuously and provide weather alerts and forecasts
+
+Use menu option **15** or `--weather` in CLI mode to generate these channels. Use `--weather-zip` to add location-specific information.
+
 ## File Formats
 
 ### CHIRP CSV Format
@@ -279,5 +337,5 @@ Use responsibly and in compliance with Radio Reference's Terms of Service.
 
 ---
 
-**Radio Frequency Harvester v1.1.1**  
+**Radio Frequency Harvester v1.2.0**  
 *Scraping Radio Reference → CHIRP CSV*
